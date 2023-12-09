@@ -1,0 +1,4 @@
+opencv-python==4.8.1.78
+pythonnet==3.0.3
+pyvirtualcam==0.10.2
+vidgear==0.3.2

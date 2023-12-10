@@ -3,17 +3,15 @@ from vidgear.gears import CamGear
 import clr
 import pyvirtualcam
 
-print(r'./PTZDevice.dll')
+# import c# dll
 clr.AddReference(r'./PTZDevice')
 
 from PTZ import PTZDevice, PTZType
 device = PTZDevice.GetDevice("BCC950 ConferenceCam", PTZType.Relative)
 
-modelFile = "opencv_face_detector_uint8.pb"
-configFile = "opencv_face_detector.pbtxt"
-
 net = cv2.dnn.readNetFromTensorflow("opencv_face_detector_uint8.pb", "opencv_face_detector.pbtxt")
 
+# cv2 is slow as hell without these (and still slow with them)
 cv2.setUseOptimized(True)
 cv2.setNumThreads(8)
 
@@ -21,6 +19,7 @@ if cv2.cuda.getCudaEnabledDeviceCount() > 0:
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
     
+# todo: add config
 screen_width = 1920
 screen_height = 1080
 
@@ -29,12 +28,12 @@ video_capture = CamGear(source=0, backend=cv2.CAP_DSHOW, **{
     "CAP_PROP_FRAME_HEIGHT": screen_height,
     "CAP_PROP_FPS": 30,
     "CAP_PROP_FOURCC": cv2.VideoWriter_fourcc(*"MJPG"),
-    # backend
     }).start()
 
 with pyvirtualcam.Camera(width=screen_width, height=screen_height, fps=30, fmt=pyvirtualcam.PixelFormat.BGR) as cam:
   while True:
     frame = video_capture.read()
+    # prep frame for dnn
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blob = cv2.dnn.blobFromImage(frame, 1.0, (300, 300), [104, 117, 123], False, False)
     net.setInput(blob)
@@ -42,24 +41,24 @@ with pyvirtualcam.Camera(width=screen_width, height=screen_height, fps=30, fmt=p
 
     for i in range(detections.shape[2]):
         confidence = detections[0, 0, i, 2]
+        # we are reasonably confident this is a face
         if confidence > 0.7:
             box = detections[0, 0, i, 3:7] * [frame.shape[1], frame.shape[0], frame.shape[1], frame.shape[0]]
             (x, y, x2, y2) = box.astype(int)
             #cv2.rectangle(frame, (x, y), (x2, y2), (0, 255, 0), 2)
 
+            # we track and limit the movement to prevent the motor from clicking and making sad noises
             current_y = 0
             current_x = 0
                                     
-            # move camera
             # get coords of box center and see how off we are
-            # ttodo: make this relative to the size of the screen
             x_center = (x + x2) / 2
             x_off_center = x_center - (screen_width / 2)
             y_center = (y + y2) / 2
             y_off_center = y_center - (screen_height / 2)
             
                         
-            # move camera
+            # move camera if we are off center
             if x_off_center > 100:
                 if current_x != 20:
                     current_x += 1
@@ -90,7 +89,9 @@ with pyvirtualcam.Camera(width=screen_width, height=screen_height, fps=30, fmt=p
                 device.Zoom(-1)
                             
 
+    # show frame
     cam.send(frame)    
 
+# cleanup and release camera to other processes
 video_capture.stop()
 cv2.destroyAllWindows()
